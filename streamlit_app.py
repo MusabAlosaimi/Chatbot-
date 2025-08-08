@@ -27,36 +27,6 @@ if 'classified_words' not in st.session_state:
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
-# Data storage functions
-def save_to_excel(data):
-    """Save classified words to Excel file"""
-    try:
-        df = pd.DataFrame(data)
-        filename = f"sirar_dmo_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        df.to_excel(filename, index=False)
-        return filename
-    except Exception as e:
-        st.error(f"Error saving to Excel: {str(e)}")
-        return None
-
-def save_to_json(data):
-    """Save classified words to JSON file"""
-    try:
-        filename = f"sirar_dmo_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return filename
-    except Exception as e:
-        st.error(f"Error saving to JSON: {str(e)}")
-        return None
-
-def extract_words_from_text(text):
-    """Extract meaningful words from user input"""
-    # Remove common words and extract meaningful terms
-    words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
-    common_words = {'and', 'the', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'say', 'she', 'use', 'what', 'when', 'where', 'will', 'with'}
-    return [word for word in words if word not in common_words]
-
 # Prompt Template for Gemini
 SYSTEM_PROMPT = """
 You are Sirar-DMO-Chatbot, a specialized Document Management Organization assistant. 
@@ -81,44 +51,140 @@ ALLOWED TOPICS ONLY:
 Stay focused on your mission: collecting and classifying workplace keywords.
 """
 
-def get_bot_response(user_input, context=""):
-    """Generate bot response using Gemini with restricted prompt"""
-    if not model:
-        return "Please configure your API key first."
+# ==================== SECURE API KEY HANDLING ====================
+
+def get_api_key():
+    """Get API key from Streamlit secrets or manual input"""
+    api_key = None
     
+    # Method 1: Streamlit Secrets (RECOMMENDED)
     try:
-        prompt = f"{SYSTEM_PROMPT}\n\nContext: {context}\nUser: {user_input}\nBot:"
-        response = model.generate_content(prompt)
-        return response.text
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.sidebar.success("🔐 API Key loaded from Streamlit Secrets")
+        return api_key
+    except KeyError:
+        st.sidebar.info("💡 No API key found in Streamlit Secrets")
     except Exception as e:
-        return f"Error generating response: {str(e)}"
+        st.sidebar.error(f"Error accessing secrets: {str(e)}")
+    
+    # Method 2: Environment Variables (for local development)
+    try:
+        api_key = os.getenv('GEMINI_API_KEY')
+        if api_key:
+            st.sidebar.success("🔐 API Key loaded from Environment Variable")
+            return api_key
+    except:
+        pass
+    
+    # Method 3: Manual input (fallback)
+    st.sidebar.warning("⚠️ Please configure API key in Streamlit Secrets")
+    with st.sidebar.expander("🔑 Manual API Key (Not Recommended)", expanded=False):
+        api_key = st.text_input("Enter Gemini API Key:", type="password", help="This is not secure for production use")
+        if api_key:
+            st.warning("⚠️ Manual input is not secure. Use Streamlit Secrets instead.")
+    
+    return api_key
 
-# Sidebar configuration
-st.sidebar.title("🤖 Sirar-DMO-Chatbot")
-st.sidebar.markdown("### Configuration")
+# Data storage functions
+def save_to_excel(data):
+    """Save classified words to Excel file"""
+    try:
+        df = pd.DataFrame(data)
+        filename = f"sirar_dmo_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        df.to_excel(filename, index=False)
+        return filename
+    except Exception as e:
+        st.error(f"Error saving to Excel: {str(e)}")
+        return None
 
-# API Key input
-api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
+def save_to_json(data):
+    """Save classified words to JSON file"""
+    try:
+        filename = f"sirar_dmo_keywords_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return filename
+    except Exception as e:
+        st.error(f"Error saving to JSON: {str(e)}")
+        return None
 
+def is_off_topic(user_input):
+    """Check if user input is off-topic"""
+    off_topic_keywords = [
+        'weather', 'news', 'joke', 'story', 'recipe', 'music', 'movie', 'game', 
+        'sports', 'politics', 'religion', 'health', 'medical', 'code', 'programming',
+        'math', 'calculate', 'translate', 'how to', 'what is', 'who is', 'when is',
+        'where is', 'why is', 'help me', 'can you', 'tell me about', 'explain'
+    ]
+    
+    work_keywords = ['work', 'job', 'office', 'document', 'word', 'term', 'memo', 'report', 'department']
+    
+    input_lower = user_input.lower()
+    has_off_topic = any(keyword in input_lower for keyword in off_topic_keywords)
+    has_work_context = any(keyword in input_lower for keyword in work_keywords)
+    
+    return has_off_topic and not has_work_context
+
+# ==================== SIDEBAR CONFIGURATION ====================
+
+st.sidebar.title("🔐 Secure Sirar-DMO-Chatbot")
+st.sidebar.markdown("### API Configuration")
+
+# Important restrictions notice
+st.sidebar.error("🚫 **RESTRICTED BOT**\nThis chatbot ONLY helps with:\n• Department identification\n• Collecting work keywords\n• Classifying terms\n\nIt will NOT answer general questions!")
+
+# Streamlit Secrets Instructions
+with st.sidebar.expander("📖 How to Setup Streamlit Secrets", expanded=False):
+    st.markdown("""
+    **For Streamlit Cloud/Production:**
+    1. Go to your app settings
+    2. Click on "Secrets" tab
+    3. Add this TOML format:
+    ```toml
+    GEMINI_API_KEY = "your_actual_api_key_here"
+    ```
+    
+    **For Local Development:**
+    1. Create `.streamlit/secrets.toml` file
+    2. Add the same content above
+    3. Never commit this file to git!
+    
+    **Alternative - Environment Variable:**
+    ```bash
+    export GEMINI_API_KEY="your_api_key"
+    ```
+    """)
+
+# Get API key using secure methods
+api_key = get_api_key()
+
+# Configure Gemini if API key is available
+model = None
 if api_key:
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-pro')
-        st.sidebar.success("✅ API Key configured successfully!")
+        st.sidebar.success("✅ Gemini API configured successfully!")
     except Exception as e:
-        st.sidebar.error(f"❌ Error configuring API: {str(e)}")
+        st.sidebar.error(f"❌ Error configuring Gemini API: {str(e)}")
         model = None
 else:
-    st.sidebar.warning("⚠️ Please enter your Gemini API Key")
-    model = None
+    st.sidebar.warning("⚠️ Please configure your API key")
 
 # Classification options
 st.sidebar.markdown("### Word Classifications")
 classification_options = ["Internal", "Public", "Confidential"]
 
-# Main interface
+# ==================== MAIN INTERFACE ====================
+
 st.title("🤖 Sirar-DMO-Chatbot")
 st.markdown("### Document Management Organization - Keyword Collector")
+
+# Security notice
+st.info("🔐 **Secure Application**: API keys are handled securely using Streamlit Secrets")
+
+# Important notice about chatbot restrictions
+st.warning("⚠️ **Important**: This chatbot is specialized for collecting and classifying workplace keywords only. It will not respond to general questions, requests for information, or off-topic conversations.")
 
 # Display current session info
 if st.session_state.user_department:
@@ -138,24 +204,6 @@ for message in st.session_state.chat_history:
 
 # User input
 user_input = st.chat_input("Type your message here...")
-
-def is_off_topic(user_input):
-    """Check if user input is off-topic"""
-    off_topic_keywords = [
-        'weather', 'news', 'joke', 'story', 'recipe', 'music', 'movie', 'game', 
-        'sports', 'politics', 'religion', 'health', 'medical', 'code', 'programming',
-        'math', 'calculate', 'translate', 'how to', 'what is', 'who is', 'when is',
-        'where is', 'why is', 'help me', 'can you', 'tell me about', 'explain'
-    ]
-    
-    # Check if input contains off-topic keywords and isn't about work/keywords
-    work_keywords = ['work', 'job', 'office', 'document', 'word', 'term', 'memo', 'report', 'department']
-    
-    input_lower = user_input.lower()
-    has_off_topic = any(keyword in input_lower for keyword in off_topic_keywords)
-    has_work_context = any(keyword in input_lower for keyword in work_keywords)
-    
-    return has_off_topic and not has_work_context
 
 if user_input and model:
     # Add user message to history
@@ -226,7 +274,6 @@ if user_input and model:
             st.session_state.conversation_stage = 'collect_words'
         elif 'download' in option:
             bot_response = "📁 Preparing your downloads...\n\nYour classified keywords are ready for download!"
-            # Trigger download in the sidebar
             st.session_state.ready_for_download = True
         elif 'restart' in option:
             # Reset session
@@ -246,7 +293,8 @@ if user_input and model:
     # Rerun to update chat display
     st.rerun()
 
-# Sidebar - Progress and Downloads
+# ==================== SIDEBAR PROGRESS & DOWNLOADS ====================
+
 st.sidebar.markdown("### 📊 Progress")
 if st.session_state.classified_words:
     st.sidebar.markdown(f"**Classified Words:** {len(st.session_state.classified_words)}")
@@ -284,11 +332,12 @@ if st.session_state.classified_words:
 
 # Initial greeting
 if not st.session_state.chat_history and model:
-    initial_message = "👋 Hello! I'm Sirar-DMO-Chatbot, your Document Management Organization assistant. I help collect and classify keywords used in different departments. What department do you work in?"
+    initial_message = "👋 Hello! I'm Sirar-DMO-Chatbot, your specialized Document Management Organization assistant. \n\n⚠️ **Please note**: I can ONLY help with collecting and classifying workplace keywords. I cannot answer general questions or provide other assistance.\n\nTo get started: What department do you work in? (e.g., HR, Finance, IT, Marketing, etc.)"
     st.session_state.chat_history.append({"role": "assistant", "content": initial_message})
     st.rerun()
 
-# Footer
+# ==================== FOOTER ====================
+
 st.markdown("---")
 st.markdown("**Sirar-DMO-Chatbot** - Document Management Organization Keyword Collector | Built with Streamlit & Gemini AI")
 
@@ -301,3 +350,17 @@ with st.expander("📋 Sample Data Structure"):
         "timestamp": "2024-01-15T10:30:00"
     }
     st.json(sample_data)
+
+# Security information
+with st.expander("🔐 Security Information"):
+    st.markdown("""
+    **API Key Security:**
+    - ✅ Streamlit Secrets (Recommended)
+    - ✅ Environment Variables (Local dev)
+    - ⚠️ Manual input (Not recommended for production)
+    
+    **Data Security:**
+    - All conversations are session-based
+    - No data is stored permanently unless downloaded
+    - Files are generated locally
+    """)
